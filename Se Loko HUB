@@ -1,0 +1,379 @@
+-- Se Loko HUB v2 - FIXED TOGGLES - Sticky Aimbot + ESP Reset + Player Mods
+-- Agora toggles funcionam de verdade
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- Variáveis principais (sem _G, acessíveis diretamente)
+local AIM_ENABLED = false
+local WALLHACK_ENABLED = false
+local ESP_ENABLED = false
+local AIM_PART = "Head"
+local MAX_DIST = 800
+local SMOOTHNESS = 0.18
+local PREDICTION = 0.142
+
+local FLY_ENABLED = false
+local NOCLIP_ENABLED = false
+local flySpeed = 50
+local wsValue = 16
+local jpValue = 50
+
+local espHighlights = {}
+
+-- Wallcheck function
+local function isVisible(targetPart)
+    if not targetPart or not targetPart.Parent then return false end
+    local origin = Camera.CFrame.Position
+    local dir = (targetPart.Position - origin).Unit * MAX_DIST
+    
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = {LocalPlayer.Character}
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    
+    local result = Workspace:Raycast(origin, dir, params)
+    if not result then return true end
+    
+    return result.Instance:IsDescendantOf(targetPart.Parent) or 
+           result.Instance.Transparency > 0.9 or 
+           result.Instance.CanCollide == false
+end
+
+-- Closest enemy
+local function getClosestEnemy()
+    local bestPart, bestDist = nil, MAX_DIST
+    local myPos = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not myPos then return nil end
+    
+    for _, plr in Players:GetPlayers() do
+        if plr == LocalPlayer then continue end
+        if not plr.Character then continue end
+        
+        local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+        
+        if plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then continue end
+        
+        local part = plr.Character:FindFirstChild(AIM_PART)
+        if not part then continue end
+        
+        local dist3D = (part.Position - myPos.Position).Magnitude
+        if dist3D > bestDist then continue end
+        
+        if not WALLHACK_ENABLED and not isVisible(part) then continue end
+        
+        bestDist = dist3D
+        bestPart = part
+    end
+    
+    return bestPart
+end
+
+-- ESP com reset periódico
+local function createOrUpdateHighlight(plr)
+    if not plr.Character or not plr.Character.Parent then return end
+    
+    local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    
+    if hum.Health > 0 and plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then
+        return
+    end
+    
+    if espHighlights[plr] then
+        espHighlights[plr]:Destroy()
+        espHighlights[plr] = nil
+    end
+    
+    local hl = Instance.new("Highlight")
+    hl.FillTransparency = 1
+    hl.OutlineTransparency = 0
+    hl.OutlineColor = Color3.fromRGB(255, 0, 0)
+    
+    if hum.Health <= 0 then
+        hl.OutlineColor = Color3.fromRGB(180, 0, 0)
+    end
+    
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Adornee = plr.Character
+    hl.Parent = plr.Character
+    espHighlights[plr] = hl
+end
+
+local lastResetTime = tick()
+local RESET_INTERVAL = 3
+
+RunService.Heartbeat:Connect(function()
+    if not ESP_ENABLED then
+        for _, hl in pairs(espHighlights) do
+            if hl then hl:Destroy() end
+        end
+        espHighlights = {}
+        return
+    end
+    
+    local currentTime = tick()
+    
+    if currentTime - lastResetTime >= RESET_INTERVAL then
+        for _, hl in pairs(espHighlights) do
+            if hl then hl:Destroy() end
+        end
+        espHighlights = {}
+        lastResetTime = currentTime
+    end
+    
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        createOrUpdateHighlight(plr)
+    end
+end)
+
+Players.PlayerAdded:Connect(function(plr)
+    if plr == LocalPlayer then return end
+    
+    plr.CharacterAdded:Connect(function()
+        if not ESP_ENABLED then return end
+        task.wait(0.3)
+        createOrUpdateHighlight(plr)
+    end)
+    
+    if plr.Character then
+        task.wait(0.3)
+        createOrUpdateHighlight(plr)
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(plr)
+    if espHighlights[plr] then
+        espHighlights[plr]:Destroy()
+        espHighlights[plr] = nil
+    end
+end)
+
+-- Aimbot
+RunService.RenderStepped:Connect(function()
+    if not AIM_ENABLED then return end
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+    
+    local target = getClosestEnemy()
+    if not target then return end
+    
+    local root = target.Parent:FindFirstChild("HumanoidRootPart")
+    local predPos = target.Position
+    if root and root.Velocity.Magnitude > 0 then
+        predPos = predPos + root.Velocity * PREDICTION
+    end
+    
+    local current = Camera.CFrame
+    local targetCF = CFrame.lookAt(current.Position, predPos)
+    
+    local distToTarget = (predPos - current.Position).Magnitude
+    local alpha = math.clamp(SMOOTHNESS * (1 + (distToTarget / 200)), 0.08, 0.35)
+    
+    Camera.CFrame = current:Lerp(targetCF, alpha)
+end)
+
+-- GUI Retrátil
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "SeLokoHub"
+ScreenGui.Parent = game:GetService("CoreGui")
+ScreenGui.ResetOnSpawn = false
+
+-- Ícone flutuante
+local IconButton = Instance.new("TextButton")
+IconButton.Size = UDim2.new(0, 60, 0, 60)
+IconButton.Position = UDim2.new(0, 20, 0, 20)
+IconButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+IconButton.Text = "HUB"
+IconButton.TextColor3 = Color3.new(1,1,1)
+IconButton.Font = Enum.Font.GothamBold
+IconButton.TextScaled = true
+IconButton.Parent = ScreenGui
+
+local IconCorner = Instance.new("UICorner", IconButton)
+IconCorner.CornerRadius = UDim.new(1, 0)
+
+-- Frame principal
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 320, 0, 420)
+MainFrame.Position = UDim2.new(0, 90, 0, 20)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+MainFrame.Visible = false
+MainFrame.Parent = ScreenGui
+
+local FrameCorner = Instance.new("UICorner", MainFrame)
+FrameCorner.CornerRadius = UDim.new(0, 12)
+
+-- Tabs
+local TabFrame = Instance.new("Frame", MainFrame)
+TabFrame.Size = UDim2.new(1, 0, 0, 40)
+TabFrame.BackgroundTransparency = 1
+
+local MainTabBtn = Instance.new("TextButton", TabFrame)
+MainTabBtn.Size = UDim2.new(0.5, 0, 1, 0)
+MainTabBtn.Text = "Main"
+MainTabBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+MainTabBtn.TextColor3 = Color3.new(1,1,1)
+
+local PlayerTabBtn = Instance.new("TextButton", TabFrame)
+PlayerTabBtn.Size = UDim2.new(0.5, 0, 1, 0)
+PlayerTabBtn.Position = UDim2.new(0.5, 0, 0, 0)
+PlayerTabBtn.Text = "Player"
+PlayerTabBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+PlayerTabBtn.TextColor3 = Color3.new(1,1,1)
+
+local MainContent = Instance.new("ScrollingFrame", MainFrame)
+MainContent.Size = UDim2.new(1, 0, 1, -50)
+MainContent.Position = UDim2.new(0, 0, 0, 40)
+MainContent.BackgroundTransparency = 1
+MainContent.CanvasSize = UDim2.new(0, 0, 0, 400)
+MainContent.Visible = true
+
+local PlayerContent = Instance.new("ScrollingFrame", MainFrame)
+PlayerContent.Size = UDim2.new(1, 0, 1, -50)
+PlayerContent.Position = UDim2.new(0, 0, 0, 40)
+PlayerContent.BackgroundTransparency = 1
+PlayerContent.CanvasSize = UDim2.new(0, 0, 0, 400)
+PlayerContent.Visible = false
+
+local function showTab(tab)
+    MainContent.Visible = tab == "Main"
+    PlayerContent.Visible = tab == "Player"
+    MainTabBtn.BackgroundColor3 = tab == "Main" and Color3.fromRGB(60,60,60) or Color3.fromRGB(30,30,30)
+    PlayerTabBtn.BackgroundColor3 = tab == "Player" and Color3.fromRGB(60,60,60) or Color3.fromRGB(30,30,30)
+end
+
+MainTabBtn.MouseButton1Click:Connect(function() showTab("Main") end)
+PlayerTabBtn.MouseButton1Click:Connect(function() showTab("Player") end)
+
+-- Toggle menu
+local menuOpen = false
+IconButton.MouseButton1Click:Connect(function()
+    menuOpen = not menuOpen
+    MainFrame.Visible = menuOpen
+end)
+
+-- Função para criar toggle (agora altera variável real)
+local function addToggle(parent, name, posY, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.9, 0, 0, 50)
+    btn.Position = UDim2.new(0.05, 0, 0, posY)
+    btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    btn.Text = name .. ": OFF"
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.Parent = parent
+    
+    local corner = Instance.new("UICorner", btn)
+    corner.CornerRadius = UDim.new(0,8)
+    
+    local enabled = false
+    btn.MouseButton1Click:Connect(function()
+        enabled = not enabled
+        btn.Text = name .. (enabled and ": ON" or ": OFF")
+        btn.BackgroundColor3 = enabled and Color3.fromRGB(0,150,0) or Color3.fromRGB(40,40,40)
+        callback(enabled)
+    end)
+end
+
+-- Toggles Main
+addToggle(MainContent, "Sticky Aim", 10, function(state) AIM_ENABLED = state end)
+addToggle(MainContent, "Parede", 70, function(state) WALLHACK_ENABLED = state end)
+addToggle(MainContent, "ESP", 130, function(state) ESP_ENABLED = state end)
+
+-- Sliders Player
+local function addSlider(parent, name, posY, default, callback)
+    local label = Instance.new("TextLabel", parent)
+    label.Size = UDim2.new(0.5, 0, 0, 30)
+    label.Position = UDim2.new(0.05, 0, 0, posY)
+    label.BackgroundTransparency = 1
+    label.Text = name .. ": " .. default
+    label.TextColor3 = Color3.new(1,1,1)
+    
+    local box = Instance.new("TextBox", parent)
+    box.Size = UDim2.new(0.4, 0, 0, 30)
+    box.Position = UDim2.new(0.55, 0, 0, posY)
+    box.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    box.Text = tostring(default)
+    box.TextColor3 = Color3.new(1,1,1)
+    
+    box.FocusLost:Connect(function()
+        local num = tonumber(box.Text)
+        if num then
+            callback(num)
+            label.Text = name .. ": " .. num
+        end
+    end)
+end
+
+addSlider(PlayerContent, "WalkSpeed", 10, 16, function(val)
+    wsValue = val
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        LocalPlayer.Character.Humanoid.WalkSpeed = val
+    end
+end)
+
+addSlider(PlayerContent, "JumpPower", 70, 50, function(val)
+    jpValue = val
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        LocalPlayer.Character.Humanoid.JumpPower = val
+    end
+end)
+
+addToggle(PlayerContent, "Fly", 130, function(state) FLY_ENABLED = state end)
+addToggle(PlayerContent, "Noclip", 190, function(state) NOCLIP_ENABLED = state end)
+
+-- Fly + Noclip
+local bodyVelocity, bodyGyro
+RunService.RenderStepped:Connect(function()
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+    local hrp = LocalPlayer.Character.HumanoidRootPart
+    
+    if FLY_ENABLED then
+        if not bodyVelocity then
+            bodyVelocity = Instance.new("BodyVelocity", hrp)
+            bodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+            bodyVelocity.Velocity = Vector3.new()
+            
+            bodyGyro = Instance.new("BodyGyro", hrp)
+            bodyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+            bodyGyro.P = 9000
+        end
+        
+        local cam = Camera.CFrame
+        local moveDir = Vector3.new()
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir += cam.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir -= cam.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir -= cam.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir += cam.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir += Vector3.yAxis end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir -= Vector3.yAxis end
+        
+        bodyVelocity.Velocity = moveDir.Unit * flySpeed * 10
+        bodyGyro.CFrame = cam
+    else
+        if bodyVelocity then bodyVelocity:Destroy() bodyVelocity = nil end
+        if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
+    end
+    
+    if NOCLIP_ENABLED and LocalPlayer.Character then
+        for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
+        end
+    end
+end)
+
+-- Atualiza WS/JP ao respawn
+LocalPlayer.CharacterAdded:Connect(function(char)
+    local hum = char:WaitForChild("Humanoid")
+    hum.WalkSpeed = wsValue
+    hum.JumpPower = jpValue
+end)
+
+print("Se Loko HUB v2 carregado - toggles corrigidos!")
